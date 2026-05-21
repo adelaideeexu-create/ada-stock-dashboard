@@ -157,7 +157,18 @@
   <div class="sidebar">
     <div class="card">
       <div class="card-title">🤖 AI 信号分析</div>
-      <div id="aiBox"><div class="loading">分析中…</div></div>
+      <div id="aiBox">
+        <div class="ai-block">
+          <div class="ai-label">今日盘中</div>
+          <div id="intradayBox"><div class="loading">加载中…</div></div>
+        </div>
+        <hr class="ai-divider">
+        <div class="ai-block">
+          <div class="ai-label">短期走势（近 2 周）</div>
+          <div id="shortTermBox"><div class="loading">加载中…</div></div>
+        </div>
+        <div class="disclaimer">⚠️ 仅供个人学习，不构成投资建议</div>
+      </div>
     </div>
     <div class="card" id="analystCard">
       <div class="card-title">📊 华尔街分析师共识</div>
@@ -455,18 +466,10 @@ function buildIntradayAI(sym, price, prev, open, high, low) {
     badge='➡️ 今日横盘'; cls='neutral';
     text=`今天涨跌幅仅 ${chgPct.toFixed(2)}%，日内位置 ${rangePos}%，多空力量相当，属震荡整理。`;
   }
-  document.getElementById('aiBox').innerHTML = `
-    <div class="ai-block">
-      <div class="ai-label">今日盘中</div>
-      <div class="signal-badge ${cls}">${badge}</div>
-      <div class="signal-text">${text}</div>
-    </div>
-    <hr class="ai-divider">
-    <div class="ai-block">
-      <div class="ai-label">短期走势（近 2 周）</div>
-      <div id="shortTermBox"><div class="loading">正在拉取 RSI & 均线…</div></div>
-    </div>
-    <div class="disclaimer">⚠️ 仅供个人学习，不构成投资建议</div>
+  // 只更新盘中区块，不碰短期走势
+  document.getElementById('intradayBox').innerHTML = `
+    <div class="signal-badge ${cls}">${badge}</div>
+    <div class="signal-text">${text}</div>
   `;
 }
 
@@ -717,8 +720,11 @@ function checkAlerts(sym, price){
   });
 }
 
-// 每 60 秒刷新行情
-setInterval(()=> market==='US' ? fetchUSQuote(currentSym) : fetchCNQuote(currentSym), 60000);
+// 每 60 秒只刷新行情和盘中分析，短期走势不重算（日线数据，没必要频繁刷）
+setInterval(() => {
+  if (market === 'US') fetchUSQuote(currentSym);
+  else fetchCNQuote(currentSym);
+}, 60000);
 </script>
 </body>
 </html>
