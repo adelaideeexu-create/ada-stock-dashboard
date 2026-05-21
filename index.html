@@ -532,6 +532,23 @@
     } catch(e) { document.getElementById('newsGrid').innerHTML = '<div class="loading">加载失败</div>'; }
   }
 
+  // ── 中文名词典 ──
+  const CN = {
+    '苹果':'AAPL','特斯拉':'TSLA','英伟达':'NVDA','微软':'MSFT',
+    '谷歌':'GOOGL','亚马逊':'AMZN','脸书':'META','Meta':'META',
+    '奈飞':'NFLX','网飞':'NFLX','台积电':'TSM','英特尔':'INTC',
+    '高通':'QCOM','博通':'AVGO','AMD':'AMD','西部数据':'WDC','闪迪':'WDC',
+    '可口可乐':'KO','百事可乐':'PEP','麦当劳':'MCD','波音':'BA',
+    '迪士尼':'DIS','耐克':'NKE','沃尔玛':'WMT','强生':'JNJ',
+    '辉瑞':'PFE','摩根大通':'JPM','巴菲特':'BRK-B','伯克希尔':'BRK-B',
+    '优步':'UBER','Snap':'SNAP','推特':'TWTR','阿里巴巴':'BABA',
+    '阿里':'BABA','京东':'JD','百度':'BIDU','拼多多':'PDD','Temu':'PDD',
+    '网易':'NTES','微博':'WB','爱奇艺':'IQ','哔哩哔哩':'BILI','B站':'BILI',
+    '蔚来':'NIO','小鹏':'XPEV','理想':'LI','新东方':'EDU','好未来':'TAL',
+    '贝壳':'BEKE','满帮':'ATH','标普500':'SPY','纳斯达克':'QQQ','道琼斯':'DIA',
+    '黄金':'GLD','石油':'USO','特斯拉':'TSLA','英特尔':'INTC',
+  };
+
   // ── SEARCH ──
   document.getElementById('searchInput').addEventListener('input', function() {
     clearTimeout(searchTimer);
@@ -542,11 +559,32 @@
 
   async function doSearch(q) {
     try {
+      const dd = document.getElementById('searchDrop');
+
+      // 中文名匹配
+      const cnMatches = Object.entries(CN)
+        .filter(([name]) => name.includes(q) || q.includes(name))
+        .slice(0, 4)
+        .map(([name, sym]) => ({ symbol: sym, description: name, cn: true }));
+
+      // Finnhub 英文/代码搜索
       const res  = await fetch(`https://finnhub.io/api/v1/search?q=${q}&token=${KEY}`);
       const data = await res.json();
-      const list = (data.result || []).filter(r => r.type === 'Common Stock').slice(0, 8);
-      const dd   = document.getElementById('searchDrop');
+      const enMatches = (data.result || [])
+        .filter(r => r.type === 'Common Stock')
+        .slice(0, 6)
+        .map(r => ({ symbol: r.symbol, description: r.description, cn: false }));
+
+      // 合并去重
+      const seen = new Set();
+      const list = [...cnMatches, ...enMatches].filter(r => {
+        if (seen.has(r.symbol)) return false;
+        seen.add(r.symbol);
+        return true;
+      }).slice(0, 8);
+
       if (!list.length) { dd.classList.remove('open'); return; }
+
       dd.innerHTML = list.map(r => `
         <div class="s-item" onclick="pickSym('${r.symbol}')">
           <span class="s-sym">${r.symbol}</span>
