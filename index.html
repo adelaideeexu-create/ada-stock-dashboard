@@ -361,34 +361,43 @@ async function fetchUSQuote(sym) {
 }
 
 // ═══════════════════════════════════════════
-//  A股行情（Yahoo Finance）
+//  A股行情（Yahoo Finance via CORS 代理）
 // ═══════════════════════════════════════════
 async function fetchCNQuote(sym) {
+  // 先重置显示，避免残留上一支股票的数据
+  document.getElementById('companyName').textContent = '加载中…';
+  document.getElementById('priceEl').textContent = '—';
+  document.getElementById('changeEl').textContent = '—';
+  document.getElementById('statsRow').innerHTML = '<div class="loading">加载中…</div>';
   try {
-    const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=5d&lang=zh-CN`
-    );
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=5d`;
+    const proxy    = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+    const res  = await fetch(proxy);
     const data = await res.json();
-    const meta = data.chart.result[0].meta;
-    const quotes = data.chart.result[0].indicators.quote[0];
-    const closes = quotes.close.filter(v => v != null);
-    const prev = closes.length >= 2 ? closes[closes.length-2] : meta.chartPreviousClose;
+    const result = data?.chart?.result?.[0];
+    if (!result) throw new Error('no data');
+    const meta   = result.meta;
+    const closes = result.indicators.quote[0].close.filter(v => v != null);
+    const prev   = closes.length >= 2 ? closes[closes.length-2] : meta.chartPreviousClose;
     renderQuote({
-      name: meta.longName || meta.shortName || sym,
-      label: `${sym} · ${meta.exchangeName||'A股'} · 人民币`,
-      price: meta.regularMarketPrice,
-      prev:  prev || meta.chartPreviousClose,
-      open:  meta.regularMarketOpen,
-      high:  meta.regularMarketDayHigh,
-      low:   meta.regularMarketDayLow,
-      cap:   meta.marketCap ? (meta.marketCap/1e8).toFixed(0)+'亿 CNY' : '—',
+      name:     meta.longName || meta.shortName || sym,
+      label:    `${sym} · ${meta.exchangeName || 'A股'} · 人民币`,
+      price:    meta.regularMarketPrice,
+      prev:     prev || meta.chartPreviousClose,
+      open:     meta.regularMarketOpen,
+      high:     meta.regularMarketDayHigh,
+      low:      meta.regularMarketDayLow,
+      cap:      meta.marketCap ? (meta.marketCap/1e8).toFixed(0)+'亿 CNY' : '—',
       currency: 'CNY'
     });
-    buildIntradayAI(sym, meta.regularMarketPrice, prev, meta.regularMarketOpen,
-      meta.regularMarketDayHigh, meta.regularMarketDayLow);
+    buildIntradayAI(sym, meta.regularMarketPrice, prev,
+      meta.regularMarketOpen, meta.regularMarketDayHigh, meta.regularMarketDayLow);
     checkAlerts(sym, meta.regularMarketPrice);
   } catch(e) {
-    document.getElementById('companyName').textContent = '加载失败，请稍后重试';
+    document.getElementById('companyName').textContent = '行情加载失败（图表数据正常）';
+    document.getElementById('statsRow').innerHTML =
+      '<div style="color:var(--muted);font-size:12px">K线图仍可正常使用，行情数字暂时无法获取</div>';
+    // 短期走势仍然单独加载
     console.error(e);
   }
 }
@@ -459,9 +468,15 @@ function buildIntradayAI(sym, price, prev, open, high, low) {
 async function fetchShortTermAI(sym) {
   const box = document.getElementById('shortTermBox');
   try {
-    const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=6mo`
-    );
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=6mo`;
+    // A股需要走代理，美股直连通常没问题，失败时同样走代理
+    let res = null;
+    try {
+      res = await fetch(yahooUrl);
+      if (!res.ok) throw new Error('direct failed');
+    } catch {
+      res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`);
+    }
     const data = await res.json();
     const result = data?.chart?.result?.[0];
     if (!result) { box.innerHTML='<div class="loading">暂无数据</div>'; return; }
