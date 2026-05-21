@@ -151,7 +151,20 @@
     .bearish { background: rgba(248,81,73,.15); color: var(--red); }
     .neutral  { background: rgba(88,166,255,.15); color: var(--accent); }
     .signal-text { color: var(--muted); line-height: 1.75; font-size: 13px; }
-    .disclaimer { margin-top: 10px; font-size: 11px; color: var(--border); }
+    .disclaimer { margin-top: 10px; font-size: 11px; color: var(--muted); opacity: .5; }
+
+    /* AI two-block */
+    .ai-block { margin-bottom: 14px; }
+    .ai-block:last-child { margin-bottom: 0; }
+    .ai-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .ai-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 
     /* Analyst bar */
     .consensus-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: 8px 0; }
@@ -442,41 +455,123 @@
         <div class="stat">市值 <span>${p.marketCapitalization ? (p.marketCapitalization/1000).toFixed(0)+'B' : '—'}</span></div>
       `;
 
-      buildAI(sym, q, p);
+      buildIntradayAI(sym, q);
+      fetchShortTermAI(sym, q.c);
       checkAlerts(sym, q.c);
     } catch(e) { console.error(e); }
   }
 
-  // ── AI ANALYSIS ──
-  function buildAI(sym, q, p) {
-    const chg = q.c - q.pc;
-    const chgPct = chg / q.pc * 100;
+  // ── AI 分析：今日盘中 ──
+  function buildIntradayAI(sym, q) {
+    const chg     = q.c - q.pc;
+    const chgPct  = chg / q.pc * 100;
     const rangePos = ((q.c - q.l) / (q.h - q.l) * 100).toFixed(0);
+    const fromOpen = ((q.c - q.o) / q.o * 100).toFixed(2);
 
     let badge, cls, text;
 
     if (chgPct > 2) {
-      badge = '📈 强势看涨'; cls = 'bullish';
-      text = `${sym} 今日大涨 ${chgPct.toFixed(2)}%，买方明显主导。当前价格 $${q.c.toFixed(2)} 处于日内区间的 ${rangePos}% 高位。建议关注成交量是否持续放大来确认趋势的可信度，并警惕短期获利回吐风险。`;
-    } else if (chgPct > 0.5) {
-      badge = '📈 温和看涨'; cls = 'bullish';
-      text = `${sym} 今日小幅上涨 ${chgPct.toFixed(2)}%，目前处于日内区间的 ${rangePos}% 位置。涨势温和，建议结合图表上的 RSI 和均线方向，判断是否有进一步上行空间。`;
+      badge = '📈 今日强势'; cls = 'bullish';
+      text = `今天大涨 ${chgPct.toFixed(2)}%，较开盘价 ${fromOpen > 0 ? '+' : ''}${fromOpen}%。当前价格处于日内波动区间的高位（${rangePos}%），买方主导明显。需警惕尾盘获利回吐。`;
+    } else if (chgPct > 0.3) {
+      badge = '📈 今日温和上涨'; cls = 'bullish';
+      text = `今天小幅上涨 ${chgPct.toFixed(2)}%，处于日内区间 ${rangePos}% 位置。较开盘 ${fromOpen > 0 ? '+' : ''}${fromOpen}%，涨势平稳。`;
     } else if (chgPct < -2) {
-      badge = '📉 强势看跌'; cls = 'bearish';
-      text = `${sym} 今日大跌 ${Math.abs(chgPct).toFixed(2)}%，卖压较重。价格处于日内区间的 ${rangePos}% 低位。需关注关键支撑位是否能守住，若跌破重要均线需警惕进一步下行。`;
-    } else if (chgPct < -0.5) {
-      badge = '📉 温和看跌'; cls = 'bearish';
-      text = `${sym} 今日小幅下跌 ${Math.abs(chgPct).toFixed(2)}%，跌幅有限，短期可能处于震荡整理阶段。建议观察尾盘能否收复失地，以及量能变化。`;
+      badge = '📉 今日强势下跌'; cls = 'bearish';
+      text = `今天大跌 ${Math.abs(chgPct).toFixed(2)}%，较开盘价 ${fromOpen}%。当前处于日内低位（${rangePos}%），卖压较重，需关注关键支撑能否守住。`;
+    } else if (chgPct < -0.3) {
+      badge = '📉 今日温和下跌'; cls = 'bearish';
+      text = `今天小幅下跌 ${Math.abs(chgPct).toFixed(2)}%，处于日内区间 ${rangePos}% 位置。较开盘 ${fromOpen}%，跌幅有限，暂属正常波动。`;
     } else {
-      badge = '➡️ 横盘震荡'; cls = 'neutral';
-      text = `${sym} 今日涨跌幅仅 ${chgPct.toFixed(2)}%，多空力量相当，价格在日内区间中部（${rangePos}%）附近波动。可等待方向明确后再行判断，避免追高杀跌。`;
+      badge = '➡️ 今日横盘'; cls = 'neutral';
+      text = `今天涨跌幅仅 ${chgPct.toFixed(2)}%，日内区间位置 ${rangePos}%，多空力量相当，属于震荡整理状态。`;
     }
 
+    // 先渲染盘中部分，短期部分占位
     document.getElementById('aiBox').innerHTML = `
-      <div class="signal-badge ${cls}">${badge}</div>
-      <div class="signal-text">${text}</div>
+      <div class="ai-block">
+        <div class="ai-label">今日盘中</div>
+        <div class="signal-badge ${cls}">${badge}</div>
+        <div class="signal-text">${text}</div>
+      </div>
+      <hr class="ai-divider">
+      <div class="ai-block">
+        <div class="ai-label">短期走势（近 2 周）</div>
+        <div id="shortTermBox"><div class="loading">正在拉取 RSI & 均线…</div></div>
+      </div>
       <div class="disclaimer">⚠️ 仅供个人学习，不构成投资建议</div>
     `;
+  }
+
+  // ── AI 分析：短期走势（RSI + SMA20 + SMA50）──
+  async function fetchShortTermAI(sym, currentPrice) {
+    try {
+      const now  = Math.floor(Date.now() / 1000);
+      const past = now - 120 * 86400; // 过去 120 天
+      const base = `https://finnhub.io/api/v1/indicator?symbol=${sym}&resolution=D&from=${past}&to=${now}&token=${KEY}`;
+
+      const [rsiRes, sma20Res, sma50Res] = await Promise.all([
+        fetch(`${base}&indicator=rsi&timeperiod=14`),
+        fetch(`${base}&indicator=sma&timeperiod=20`),
+        fetch(`${base}&indicator=sma&timeperiod=50`),
+      ]);
+
+      const rsiData  = await rsiRes.json();
+      const sma20Data = await sma20Res.json();
+      const sma50Data = await sma50Res.json();
+
+      const rsi   = rsiData.rsi?.slice(-1)[0];
+      const sma20 = sma20Data.sma?.slice(-1)[0];
+      const sma50 = sma50Data.sma?.slice(-1)[0];
+
+      if (!rsi || !sma20) {
+        document.getElementById('shortTermBox').innerHTML = '<div class="loading">数据不足</div>';
+        return;
+      }
+
+      // 判断逻辑
+      const aboveSMA20 = currentPrice > sma20;
+      const aboveSMA50 = sma50 ? currentPrice > sma50 : null;
+      let badge, cls, lines = [];
+
+      // RSI 判断
+      if (rsi > 70) {
+        lines.push(`RSI ${rsi.toFixed(1)}：超买区间，短期存在回调压力`);
+      } else if (rsi > 55) {
+        lines.push(`RSI ${rsi.toFixed(1)}：强势区间，动能偏强`);
+      } else if (rsi > 45) {
+        lines.push(`RSI ${rsi.toFixed(1)}：中性区间，方向待明确`);
+      } else if (rsi > 30) {
+        lines.push(`RSI ${rsi.toFixed(1)}：偏弱区间，空方占优`);
+      } else {
+        lines.push(`RSI ${rsi.toFixed(1)}：超卖区间，可能出现技术反弹`);
+      }
+
+      // 均线判断
+      lines.push(`20日均线 $${sma20.toFixed(2)}：当前价格${aboveSMA20 ? '在其上方（短期偏强）' : '在其下方（短期偏弱）'}`);
+      if (aboveSMA50 !== null) {
+        lines.push(`50日均线 $${sma50.toFixed(2)}：当前价格${aboveSMA50 ? '在其上方（中期趋势向上）' : '在其下方（中期趋势向下）'}`);
+      }
+
+      // 综合信号
+      const bullPoints = [aboveSMA20, aboveSMA50, rsi > 50].filter(Boolean).length;
+      if (rsi > 70 && aboveSMA20) {
+        badge = '⚠️ 短期超买'; cls = 'neutral';
+      } else if (bullPoints >= 2 && rsi < 70) {
+        badge = '📈 短期偏多'; cls = 'bullish';
+      } else if (bullPoints === 0 || (rsi < 40 && !aboveSMA20)) {
+        badge = '📉 短期偏空'; cls = 'bearish';
+      } else {
+        badge = '➡️ 短期震荡'; cls = 'neutral';
+      }
+
+      document.getElementById('shortTermBox').innerHTML = `
+        <div class="signal-badge ${cls}">${badge}</div>
+        <div class="signal-text">${lines.join('<br>')}</div>
+      `;
+    } catch(e) {
+      document.getElementById('shortTermBox').innerHTML = '<div class="loading">加载失败</div>';
+    }
   }
 
   // ── ANALYST ──
