@@ -503,75 +503,77 @@
     `;
   }
 
-  // ── AI 分析：短期走势（RSI + SMA20 + SMA50）──
+  // ── AI 分析：短期走势（自算 RSI + SMA，只需一次 K线请求）──
   async function fetchShortTermAI(sym, currentPrice) {
+    const box = document.getElementById('shortTermBox');
     try {
       const now  = Math.floor(Date.now() / 1000);
-      const past = now - 120 * 86400; // 过去 120 天
-      const base = `https://finnhub.io/api/v1/indicator?symbol=${sym}&resolution=D&from=${past}&to=${now}&token=${KEY}`;
+      const past = now - 150 * 86400; // 150 天原始K线
+      const res  = await fetch(
+        `https://finnhub.io/api/v1/stock/candle?symbol=${sym}&resolution=D&from=${past}&to=${now}&token=${KEY}`
+      );
+      const data = await res.json();
 
-      const [rsiRes, sma20Res, sma50Res] = await Promise.all([
-        fetch(`${base}&indicator=rsi&timeperiod=14`),
-        fetch(`${base}&indicator=sma&timeperiod=20`),
-        fetch(`${base}&indicator=sma&timeperiod=50`),
-      ]);
-
-      const rsiData  = await rsiRes.json();
-      const sma20Data = await sma20Res.json();
-      const sma50Data = await sma50Res.json();
-
-      const rsi   = rsiData.rsi?.slice(-1)[0];
-      const sma20 = sma20Data.sma?.slice(-1)[0];
-      const sma50 = sma50Data.sma?.slice(-1)[0];
-
-      if (!rsi || !sma20) {
-        document.getElementById('shortTermBox').innerHTML = '<div class="loading">数据不足</div>';
+      if (data.s !== 'ok' || !data.c || data.c.length < 20) {
+        box.innerHTML = '<div class="loading">K线数据不足，请换其他股票试试</div>';
         return;
       }
 
-      // 判断逻辑
+      const closes = data.c;
+      const n      = closes.length;
+
+      // 计算 SMA20
+      const sma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+      // 计算 SMA50（如果数据够）
+      const sma50 = n >= 50 ? closes.slice(-50).reduce((a, b) => a + b, 0) / 50 : null;
+      // 计算 RSI14
+      const rsi   = calcRSI(closes.slice(-15));
+
+      // ── 判断逻辑 ──
       const aboveSMA20 = currentPrice > sma20;
-      const aboveSMA50 = sma50 ? currentPrice > sma50 : null;
-      let badge, cls, lines = [];
+      const aboveSMA50 = sma50 != null ? currentPrice > sma50 : null;
+      const lines = [];
 
-      // RSI 判断
-      if (rsi > 70) {
-        lines.push(`RSI ${rsi.toFixed(1)}：超买区间，短期存在回调压力`);
-      } else if (rsi > 55) {
-        lines.push(`RSI ${rsi.toFixed(1)}：强势区间，动能偏强`);
-      } else if (rsi > 45) {
-        lines.push(`RSI ${rsi.toFixed(1)}：中性区间，方向待明确`);
-      } else if (rsi > 30) {
-        lines.push(`RSI ${rsi.toFixed(1)}：偏弱区间，空方占优`);
-      } else {
-        lines.push(`RSI ${rsi.toFixed(1)}：超卖区间，可能出现技术反弹`);
-      }
+      if      (rsi > 70) lines.push(`RSI ${rsi.toFixed(1)}：超买区间，短期存在回调压力`);
+      else if (rsi > 55) lines.push(`RSI ${rsi.toFixed(1)}：强势区间，买方动能偏强`);
+      else if (rsi > 45) lines.push(`RSI ${rsi.toFixed(1)}：中性区间，方向尚未明确`);
+      else if (rsi > 30) lines.push(`RSI ${rsi.toFixed(1)}：偏弱区间，空方占优`);
+      else               lines.push(`RSI ${rsi.toFixed(1)}：超卖区间，可能出现技术性反弹`);
 
-      // 均线判断
-      lines.push(`20日均线 $${sma20.toFixed(2)}：当前价格${aboveSMA20 ? '在其上方（短期偏强）' : '在其下方（短期偏弱）'}`);
-      if (aboveSMA50 !== null) {
-        lines.push(`50日均线 $${sma50.toFixed(2)}：当前价格${aboveSMA50 ? '在其上方（中期趋势向上）' : '在其下方（中期趋势向下）'}`);
-      }
+      lines.push(`20日均线 $${sma20.toFixed(2)}：价格${aboveSMA20 ? '站上均线，短期偏强 ✅' : '跌破均线，短期偏弱 ⚠️'}`);
+      if (aboveSMA50 != null)
+        lines.push(`50日均线 $${sma50.toFixed(2)}：${aboveSMA50 ? '中期趋势向上 ✅' : '中期趋势向下 ⚠️'}`);
 
       // 综合信号
-      const bullPoints = [aboveSMA20, aboveSMA50, rsi > 50].filter(Boolean).length;
-      if (rsi > 70 && aboveSMA20) {
-        badge = '⚠️ 短期超买'; cls = 'neutral';
-      } else if (bullPoints >= 2 && rsi < 70) {
-        badge = '📈 短期偏多'; cls = 'bullish';
-      } else if (bullPoints === 0 || (rsi < 40 && !aboveSMA20)) {
-        badge = '📉 短期偏空'; cls = 'bearish';
-      } else {
-        badge = '➡️ 短期震荡'; cls = 'neutral';
-      }
+      const bulls = [aboveSMA20, aboveSMA50, rsi > 50].filter(Boolean).length;
+      let badge, cls;
+      if      (rsi > 70 && aboveSMA20)        { badge = '⚠️ 短期超买';  cls = 'neutral'; }
+      else if (bulls >= 2 && rsi <= 70)        { badge = '📈 短期偏多';  cls = 'bullish'; }
+      else if (bulls === 0 || rsi < 35)        { badge = '📉 短期偏空';  cls = 'bearish'; }
+      else                                     { badge = '➡️ 短期震荡';  cls = 'neutral'; }
 
-      document.getElementById('shortTermBox').innerHTML = `
+      box.innerHTML = `
         <div class="signal-badge ${cls}">${badge}</div>
         <div class="signal-text">${lines.join('<br>')}</div>
       `;
     } catch(e) {
-      document.getElementById('shortTermBox').innerHTML = '<div class="loading">加载失败</div>';
+      box.innerHTML = '<div class="loading">加载失败，请稍后重试</div>';
+      console.error(e);
     }
+  }
+
+  // RSI 计算（简单版，适合 14 期）
+  function calcRSI(closes) {
+    let gains = 0, losses = 0;
+    for (let i = 1; i < closes.length; i++) {
+      const d = closes[i] - closes[i - 1];
+      if (d > 0) gains += d; else losses -= d;
+    }
+    const period = closes.length - 1;
+    const avgG = gains / period;
+    const avgL = losses / period;
+    if (avgL === 0) return 100;
+    return 100 - 100 / (1 + avgG / avgL);
   }
 
   // ── ANALYST ──
