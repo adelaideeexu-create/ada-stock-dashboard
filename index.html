@@ -361,44 +361,52 @@ async function fetchUSQuote(sym) {
 }
 
 // ═══════════════════════════════════════════
-//  A股行情（Yahoo Finance via CORS 代理）
+//  A股行情（东方财富 API，无 CORS 限制）
 // ═══════════════════════════════════════════
+
+// Yahoo Finance 格式 → 东方财富 secid
+// 600519.SS → 1.600519（上交所）
+// 000858.SZ → 0.000858（深交所）
+function toSecId(sym) {
+  if (sym.endsWith('.SS')) return '1.' + sym.slice(0, -3);
+  if (sym.endsWith('.SZ')) return '0.' + sym.slice(0, -3);
+  return sym;
+}
+
 async function fetchCNQuote(sym) {
-  // 先重置显示，避免残留上一支股票的数据
   document.getElementById('companyName').textContent = '加载中…';
   document.getElementById('priceEl').textContent = '—';
   document.getElementById('changeEl').textContent = '—';
   document.getElementById('statsRow').innerHTML = '<div class="loading">加载中…</div>';
   try {
-    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=5d`;
-    const proxy    = `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
-    const res  = await fetch(proxy);
-    const data = await res.json();
-    const result = data?.chart?.result?.[0];
-    if (!result) throw new Error('no data');
-    const meta   = result.meta;
-    const closes = result.indicators.quote[0].close.filter(v => v != null);
-    const prev   = closes.length >= 2 ? closes[closes.length-2] : meta.chartPreviousClose;
+    const secid = toSecId(sym);
+    // 东方财富实时行情接口（公开，无需 key）
+    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}`
+              + `&fields=f57,f58,f43,f44,f45,f46,f60,f170,f169,f116&ut=fa5fd1943c7b386f172d6893dbfba10b`;
+    const res  = await fetch(url);
+    const json = await res.json();
+    const d    = json?.data;
+    if (!d || d.f43 === undefined || d.f43 === '-') throw new Error('no data');
+
+    // 东方财富价格字段均需 ÷100（如 131500 → 1315.00）
+    const price = d.f43 / 100;
+    const prev  = d.f60 / 100;
+    const open  = d.f46 / 100;
+    const high  = d.f44 / 100;
+    const low   = d.f45 / 100;
+    const cap   = d.f116 ? (d.f116 / 1e8).toFixed(0) + '亿 CNY' : '—';
+
     renderQuote({
-      name:     meta.longName || meta.shortName || sym,
-      label:    `${sym} · ${meta.exchangeName || 'A股'} · 人民币`,
-      price:    meta.regularMarketPrice,
-      prev:     prev || meta.chartPreviousClose,
-      open:     meta.regularMarketOpen,
-      high:     meta.regularMarketDayHigh,
-      low:      meta.regularMarketDayLow,
-      cap:      meta.marketCap ? (meta.marketCap/1e8).toFixed(0)+'亿 CNY' : '—',
-      currency: 'CNY'
+      name:     d.f58,
+      label:    `${d.f57} · ${sym.endsWith('.SS') ? '上交所' : '深交所'} · 人民币`,
+      price, prev, open, high, low, cap, currency: 'CNY'
     });
-    buildIntradayAI(sym, meta.regularMarketPrice, prev,
-      meta.regularMarketOpen, meta.regularMarketDayHigh, meta.regularMarketDayLow);
-    checkAlerts(sym, meta.regularMarketPrice);
+    buildIntradayAI(sym, price, prev, open, high, low);
+    checkAlerts(sym, price);
   } catch(e) {
     document.getElementById('companyName').textContent = '行情加载失败（图表数据正常）';
-    document.getElementById('statsRow').innerHTML =
-      '<div style="color:var(--muted);font-size:12px">K线图仍可正常使用，行情数字暂时无法获取</div>';
-    // 短期走势仍然单独加载
-    console.error(e);
+    document.getElementById('statsRow').innerHTML = '';
+    console.error('fetchCNQuote:', e);
   }
 }
 
@@ -463,38 +471,50 @@ function buildIntradayAI(sym, price, prev, open, high, low) {
 }
 
 // ═══════════════════════════════════════════
-//  AI 分析 — 短期走势（Yahoo Finance K线，美股A股通用）
+//  AI 分析 — 短期走势（美股用 Yahoo Finance，A股用东方财富）
 // ═══════════════════════════════════════════
 async function fetchShortTermAI(sym) {
   const box = document.getElementById('shortTermBox');
+  if (!box) return;
+  box.innerHTML = '<div class="loading">正在拉取 RSI & 均线…</div>';
   try {
-    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=6mo`;
-    // A股需要走代理，美股直连通常没问题，失败时同样走代理
-    let res = null;
-    try {
-      res = await fetch(yahooUrl);
-      if (!res.ok) throw new Error('direct failed');
-    } catch {
-      res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`);
+    let closes = [];
+    if (market === 'CN') {
+      // 东方财富日K线接口
+      const secid = toSecId(sym);
+      const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}`
+                + `&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56`
+                + `&klt=101&fqt=1&lmt=150&end=20500101`;
+      const res  = await fetch(url);
+      const data = await res.json();
+      if (!data?.data?.klines?.length) {
+        box.innerHTML = '<div class="loading">历史数据不足</div>'; return;
+      }
+      // klines 格式：["日期,开,收,高,低,量,..."]，收盘价在 index 2
+      closes = data.data.klines
+        .map(k => parseFloat(k.split(',')[2]))
+        .filter(v => !isNaN(v));
+    } else {
+      // Yahoo Finance（美股直连，通常无 CORS 问题）
+      const res  = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=6mo`
+      );
+      const data = await res.json();
+      const result = data?.chart?.result?.[0];
+      if (!result) { box.innerHTML='<div class="loading">暂无数据</div>'; return; }
+      closes = result.indicators.quote[0].close.filter(v => v != null);
     }
-    const data = await res.json();
-    const result = data?.chart?.result?.[0];
-    if (!result) { box.innerHTML='<div class="loading">暂无数据</div>'; return; }
 
-    const rawCloses = result.indicators.quote[0].close;
-    const closes = rawCloses.filter(v => v != null);
     const n = closes.length;
-
     if (n < 15) { box.innerHTML='<div class="loading">历史数据不足，无法计算指标</div>'; return; }
 
-    const price = closes[n-1];
-    const sma20 = n>=20 ? closes.slice(-20).reduce((a,b)=>a+b,0)/20 : null;
-    const sma50 = n>=50 ? closes.slice(-50).reduce((a,b)=>a+b,0)/50 : null;
-    const rsi   = calcRSI(closes.slice(-15));
-
-    const aboveSMA20 = sma20 != null ? price > sma20 : null;
-    const aboveSMA50 = sma50 != null ? price > sma50 : null;
-    const lines = [];
+    const price   = closes[n-1];
+    const sma20   = n>=20 ? closes.slice(-20).reduce((a,b)=>a+b,0)/20 : null;
+    const sma50   = n>=50 ? closes.slice(-50).reduce((a,b)=>a+b,0)/50 : null;
+    const rsi     = calcRSI(closes.slice(-15));
+    const above20 = sma20 != null ? price > sma20 : null;
+    const above50 = sma50 != null ? price > sma50 : null;
+    const lines   = [];
 
     if      (rsi > 70) lines.push(`RSI ${rsi.toFixed(1)}：超买区间，短期存在回调压力`);
     else if (rsi > 55) lines.push(`RSI ${rsi.toFixed(1)}：强势区间，买方动能偏强`);
@@ -502,12 +522,12 @@ async function fetchShortTermAI(sym) {
     else if (rsi > 30) lines.push(`RSI ${rsi.toFixed(1)}：偏弱区间，空方占优`);
     else               lines.push(`RSI ${rsi.toFixed(1)}：超卖区间，可能出现技术性反弹`);
 
-    if (sma20) lines.push(`20日均线 ${sma20.toFixed(2)}：价格${aboveSMA20?'站上均线，短期偏强 ✅':'跌破均线，短期偏弱 ⚠️'}`);
-    if (sma50) lines.push(`50日均线 ${sma50.toFixed(2)}：${aboveSMA50?'中期趋势向上 ✅':'中期趋势向下 ⚠️'}`);
+    if (sma20) lines.push(`20日均线 ${sma20.toFixed(2)}：价格${above20?'站上均线 ✅':'跌破均线 ⚠️'}`);
+    if (sma50) lines.push(`50日均线 ${sma50.toFixed(2)}：${above50?'中期趋势向上 ✅':'中期趋势向下 ⚠️'}`);
 
-    const bulls = [aboveSMA20, aboveSMA50, rsi>50].filter(Boolean).length;
+    const bulls = [above20, above50, rsi>50].filter(Boolean).length;
     let badge, cls;
-    if      (rsi>70 && aboveSMA20) { badge='⚠️ 短期超买'; cls='neutral'; }
+    if      (rsi>70 && above20) { badge='⚠️ 短期超买'; cls='neutral'; }
     else if (bulls>=2 && rsi<=70)  { badge='📈 短期偏多'; cls='bullish'; }
     else if (bulls===0 || rsi<35)  { badge='📉 短期偏空'; cls='bearish'; }
     else                            { badge='➡️ 短期震荡'; cls='neutral'; }
@@ -517,8 +537,8 @@ async function fetchShortTermAI(sym) {
       <div class="signal-text">${lines.join('<br>')}</div>
     `;
   } catch(e) {
-    box.innerHTML='<div class="loading">加载失败，请稍后重试</div>';
-    console.error(e);
+    box.innerHTML = '<div class="loading">加载失败，请稍后重试</div>';
+    console.error('fetchShortTermAI:', e);
   }
 }
 
